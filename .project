@@ -74,7 +74,7 @@
 		<link>
 			<name>libraries/MFRC522</name>
 			<type>2</type>
-			<location>C:/DEV/Arduino/libraries/MFRC522</location>
+			<locationURI>ECLIPSE_HOME/arduinoPlugin/libraries/MFRC522/1.4.10</locationURI>
 		</link>
 		<link>
 			<name>libraries/SPI</name>

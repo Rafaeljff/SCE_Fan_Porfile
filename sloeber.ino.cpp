@@ -2,7 +2,7 @@
 //This is a automatic generated file
 //Please do not modify this file
 //If you touch this file your change will be overwritten during the next build
-//This file has been generated on 2021-12-22 17:17:11
+//This file has been generated on 2022-01-03 11:01:49
 
 #include "Arduino.h"
 #include "Arduino.h"
@@ -23,7 +23,6 @@
 #include <Adafruit_SSD1306.h>
 
 void setup() ;
-void printDec(byte *buffer, byte bufferSize) ;
 void vTask1(void *pvParameters) ;
 void vTask2(void *pvParameters) ;
 void vTask3(void *pvParameters) ;
@@ -31,6 +30,9 @@ void vTask4(void *pvParameters) ;
 void vTask5(void *pvParameters) ;
 bool my_vApplicationIdleHook(void) ;
 void loop() ;
+void printDec(byte *buffer, byte bufferSize) ;
+void fan_speed_percentage(void) ;
+void rpm_fun(void) 	 ;
 
 #include "SCE_PROJECT.ino"
 

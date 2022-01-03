@@ -22,13 +22,13 @@
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/core/core}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/core/variant}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/DHT_sensor_library}&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/MFRC522/src}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Adafruit_Unified_Sensor}&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Wire/src}&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/SPI/src}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Adafruit_SSD1306}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Adafruit_GFX_Library}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Adafruit_BusIO}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Wire/src}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/SPI/src}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/MFRC522/src}&quot;"/>
 								</option>
 								<inputType id="io.sloeber.compiler.cpp.sketch.input.241794307" name="CPP source files" superClass="io.sloeber.compiler.cpp.sketch.input"/>
 							</tool>
@@ -37,13 +37,13 @@
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/core/core}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/core/variant}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/DHT_sensor_library}&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/MFRC522/src}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Adafruit_Unified_Sensor}&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Wire/src}&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/SPI/src}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Adafruit_SSD1306}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Adafruit_GFX_Library}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Adafruit_BusIO}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Wire/src}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/SPI/src}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/MFRC522/src}&quot;"/>
 								</option>
 								<inputType id="io.sloeber.compiler.c.sketch.input.988362849" name="C Source Files" superClass="io.sloeber.compiler.c.sketch.input"/>
 							</tool>
@@ -52,13 +52,13 @@
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/core/core}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/core/variant}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/DHT_sensor_library}&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/MFRC522/src}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Adafruit_Unified_Sensor}&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Wire/src}&quot;"/>
-									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/SPI/src}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Adafruit_SSD1306}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Adafruit_GFX_Library}&quot;"/>
 									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Adafruit_BusIO}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/Wire/src}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/SPI/src}&quot;"/>
+									<listOptionValue builtIn="false" value="&quot;${workspace_loc:/SCE_PROJECT/libraries/MFRC522/src}&quot;"/>
 								</option>
 								<inputType id="io.sloeber.compiler.S.sketch.input.353509056" name="Assembly source files" superClass="io.sloeber.compiler.S.sketch.input"/>
 							</tool>
@@ -113,6 +113,11 @@
 	<storageModule moduleId="scannerConfiguration">
 		<autodiscovery enabled="true" problemReportingEnabled="true" selectedProfileId=""/>
 	</storageModule>
-	<storageModule moduleId="refreshScope"/>
+	<storageModule moduleId="refreshScope" versionNumber="2">
+		<configuration configurationName="Release">
+			<resource resourceType="PROJECT" workspacePath="/SCE_PROJECT"/>
+		</configuration>
+	</storageModule>
 	<storageModule moduleId="org.eclipse.cdt.make.core.buildtargets"/>
+	<storageModule moduleId="org.eclipse.cdt.internal.ui.text.commentOwnerProjectMappings"/>
 </cproject>
