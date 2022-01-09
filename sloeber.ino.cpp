@@ -2,7 +2,7 @@
 //This is a automatic generated file
 //Please do not modify this file
 //If you touch this file your change will be overwritten during the next build
-//This file has been generated on 2022-01-03 17:46:37
+//This file has been generated on 2022-01-09 16:14:13
 
 #include "Arduino.h"
 #include "Arduino.h"
@@ -26,13 +26,13 @@ void setup() ;
 void vTask1(void *pvParameters) ;
 void vTask2(void *pvParameters) ;
 void vTask3(void *pvParameters) ;
-void vTask4(void *pvParameters) ;
 void vTask5(void *pvParameters) ;
 bool my_vApplicationIdleHook(void) ;
 void loop() ;
 void printDec(byte *buffer, byte bufferSize) ;
-void fan_speed_percentage(void) ;
-void rpm_fun(void) 	 ;
+void vInterruptHandler(void)  		;
+void vInterruptLCD(void)  		;
+void vMeasure_fan_speed(void) ;
 
 #include "SCE_PROJECT.ino"
 
