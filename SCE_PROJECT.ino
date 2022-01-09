@@ -43,7 +43,7 @@
 #define DHTTYPE DHT11
 #define tag_count 3
 
-#define PWM1_Ch    0
+#define PWM1_Ch    2
 #define PWM1_Res   8
 #define PWM1_Freq  15000
 
@@ -61,8 +61,9 @@ typedef struct Porfiles {
 const int Resistor_led = 13;
 const int fan_pwm = 16;
 const int button = 17;
-const int fan_tachometer = 25;
+//const int fan_tachometer = 25;
 const int signal_led = 26;
+const int onboard_button = 27;
 DHT dht(DHTPIN, DHTTYPE);
 MFRC522 rfid(SS_PIN, RST_PIN); // Instance of the class
 Adafruit_SSD1306 display = Adafruit_SSD1306(128, 32, &Wire);
@@ -71,16 +72,16 @@ Adafruit_SSD1306 display = Adafruit_SSD1306(128, 32, &Wire);
 void vTask1(void *pvParameters);
 void vTask2(void *pvParameters);
 void vTask3(void *pvParameters);
-void vTask4(void *pvParameters);
+//void vTask4(void *pvParameters);
 void vTask5(void *pvParameters);
 bool my_vApplicationIdleHook(void);
 TaskHandle_t xTask2Handle;
 SemaphoreHandle_t xBinarySemaphore;
-
+SemaphoreHandle_t xBinarySemaphoreLCD;
 const char *Task1_name = "TASK1-READING RFID\r\n"; //Leitura das tags
 const char *Task2_name = "TASK2-ATRIBUICAO DE PERFIS\r\n"; //Comparação da Tag com os perfis
-const char *Task3_name = "TASK3-TRATAMENTO DE DADOS\t\n"; //Comparação da temperatura  e velocidade da ventoinha atuais com os valores estabelecidos nos perfis
-const char *Task4_name = "TASK4-CONTROLO DE VELOCIDADE e RESISTENCIA\t\n"; //Atuação através de PWM na ventoinha e resitência de aquecimento on/off
+const char *Task3_name = "TASK3-TRATAMENTO DE DADOS\t\n"; //Comparação da temperatura  e velocidade da ventoinha atuais com os valores estabelecidos nos perfis e atuação através de PWM na ventoinha e resitência de aquecimento on/off
+const char *IDLE_TASK_name = "TASK IDLE\t\n";
 const char *Task5_name = "TASK5- LCD\r\n"; //Display da informação
 
 /* Declare a variable of type QueueHandle_t.  This is used to store the queue
@@ -88,9 +89,9 @@ const char *Task5_name = "TASK5- LCD\r\n"; //Display da informação
 QueueHandle_t xQueue; // tag uid
 QueueHandle_t xQueue2; // Queue com os perfis associados
 QueueHandle_t xQueue3; // real time fan speed
-QueueHandle_t xQueue4; // velocidade do motor
+QueueHandle_t xQueueLCD;
 volatile byte half_revolutions;
-
+volatile int display_mode;
 void setup() {
 
 	vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
@@ -103,9 +104,12 @@ void setup() {
 	dht.begin();
 	display.begin(SSD1306_SWITCHCAPVCC, 0x3C); // Address 0x3C for 128x32
 	pinMode(Resistor_led, OUTPUT);
+	pinMode(signal_led, OUTPUT);
+	digitalWrite(signal_led, LOW);
 	pinMode(button, OUTPUT);
-	attachInterrupt(button, vInterruptHandler, RISING);
-	attachInterrupt(fan_tachometer, vMeasure_fan_speed, RISING);
+	attachInterrupt(button, vInterruptHandler, FALLING);
+	attachInterrupt(onboard_button, vInterruptLCD, FALLING);
+	//attachInterrupt(fan_tachometer, vMeasure_fan_speed, RISING);
 
 	ledcSetup(PWM1_Ch, PWM1_Freq, PWM1_Res);
 	ledcAttachPin(fan_pwm, PWM1_Ch);
@@ -113,9 +117,10 @@ void setup() {
 	xQueue = xQueueCreate(1, sizeof(int));
 	xQueue2 = xQueueCreate(1, sizeof(MyPorfiles));
 	xQueue3 = xQueueCreate(1, sizeof(float));
-	xQueue4 = xQueueCreate(1, sizeof(int));
+	//xQueue4 = xQueueCreate(1, sizeof(int)); Queue para guardar as rpm da ventoinha
+	xQueueLCD = xQueueCreate(1, sizeof(MyPorfiles));
 	vSemaphoreCreateBinary(xBinarySemaphore);
-
+	vSemaphoreCreateBinary(xBinarySemaphoreLCD);
 	display.clearDisplay();
 	display.setTextSize(1);
 	display.setTextColor(SSD1306_WHITE);
@@ -125,24 +130,24 @@ void setup() {
 	display.print("Realizado por:");
 	display.setCursor(0, 20);
 	display.print("Ruben");
-	display.setCursor(20, 20);
+	display.setCursor(30, 20);
 	display.print("e Rafael ");
 	display.display();
-
+	vTaskDelay(5000 / portTICK_PERIOD_MS);
 	if (xQueue != NULL && xQueue2 != NULL && xQueue3 != NULL
+			&& xQueueLCD != NULL && xBinarySemaphore != NULL
 			&& xBinarySemaphore != NULL) {
 		xTaskCreatePinnedToCore(vTask1, "RFID Reader Task", 1024,
-				(void*) Task1_name, 4, NULL, 1);
+				(void*) Task1_name, 3, NULL, 1);
 		xTaskCreatePinnedToCore(vTask2, "Porfile Selection Task", 1024,
-				(void*) Task2_name, 3, &xTask2Handle, 1);
+				(void*) Task2_name, 2, &xTask2Handle, 1);
 		xTaskCreatePinnedToCore(vTask3, "Data Processing Task", 1024,
-				(void*) Task3_name, 4, NULL, 1);
+				(void*) Task3_name, 3, NULL, 1);
 
-		xTaskCreatePinnedToCore(vTask4, "Actuactor Task", 1024,
-				(void*) Task4_name, 1, NULL, 1);
+		//xTaskCreatePinnedToCore(my_vApplicationIdleHook, "IDLE Task", 1024, (void*) IDLE_TASK_name, 1, NULL, 1);
 
 		xTaskCreatePinnedToCore(vTask5, "LCD Display Task", 1024,
-				(void*) Task5_name, 1, NULL, 1);
+				(void*) Task5_name, 3, NULL, 1);
 
 	}
 }
@@ -170,13 +175,7 @@ void vTask1(void *pvParameters) {
 	for (;;) {
 
 		Serial.print("\nTASK1 IS RUNNING");
-		display.clearDisplay();
-		// Display static text
-		display.setCursor(0, 0);
-		display.setTextColor(0xFFFF, 0);
-		display.setTextSize(1);
-		display.setTextColor(SSD1306_WHITE);
-		display.println("TASK1 IS RUNNING");
+
 		//Serial.println(F("\nTASK1 IS RUNNING"));
 		// Repeat anti collision loop
 		//Verifica se existe colisão entre leituras, entra num loop de verificação de anti colosão
@@ -214,22 +213,23 @@ void vTask2(void *pvParameters) {
 	TickType_t xLastWakeTime;
 	MyPorfiles my_porfiles[3];
 	MyPorfiles p_selected;
+
 	my_porfiles[0].number = 605;
-	my_porfiles[0].temperature[0] = 10;
-	my_porfiles[0].temperature[1] = 20;
-	my_porfiles[0].fan_speed[0] = 71;
-	my_porfiles[0].fan_speed[1] = 80;
+	my_porfiles[0].temperature[0] = 20;
+	my_porfiles[0].temperature[1] = 21;
+	my_porfiles[0].fan_speed[0] = 140;
+	my_porfiles[0].fan_speed[1] = 160;
 	my_porfiles[0].tag_uid = 39200186180;
 	my_porfiles[1].number = 526;
-	my_porfiles[1].temperature[0] = 20;
-	my_porfiles[1].temperature[1] = 25;
-	my_porfiles[1].fan_speed[0] = 10;
-	my_porfiles[1].fan_speed[1] = 35;
+	my_porfiles[1].temperature[0] = 18;
+	my_porfiles[1].temperature[1] = 20;
+	my_porfiles[1].fan_speed[0] = 100;
+	my_porfiles[1].fan_speed[1] = 120;
 	my_porfiles[1].tag_uid = 12147227140;
 	my_porfiles[2].number = 151;
-	my_porfiles[2].temperature[0] = 25;
-	my_porfiles[2].temperature[1] = 30;
-	my_porfiles[2].fan_speed[0] = 71;
+	my_porfiles[2].temperature[0] = 16;
+	my_porfiles[2].temperature[1] = 20;
+	my_porfiles[2].fan_speed[0] = 80;
 	my_porfiles[2].fan_speed[1] = 100;
 	my_porfiles[2].tag_uid = 2365954;
 
@@ -239,14 +239,12 @@ void vTask2(void *pvParameters) {
 
 	portBASE_TYPE xStatus;
 	portBASE_TYPE xStatus2;
-
+	portBASE_TYPE xStatusLCD;
 	xLastWakeTime = xTaskGetTickCount();
 
 	for (;;) {
 		Serial.print("\nTASK2 IS RUNNING");
 
-		//display.println("TASK2 IS RUNNING");
-		//Serial.println("TASK2 IS RUNNING");
 		if (uxQueueMessagesWaiting(xQueue) >= 1)
 			xStatus = xQueueReceive(xQueue, &lReceivedValue, 0);
 
@@ -259,7 +257,7 @@ void vTask2(void *pvParameters) {
 				Serial.print("\nTASK2 IS RUNNING");
 				if (lReceivedValue == my_porfiles[i].number) {
 					Serial.print("\nPorfile with tag ");
-					Serial.print(my_porfiles[i].tag_uid);
+					Serial.print(my_porfiles[i].number);
 					Serial.print("\tselected");
 					Serial.print("\nDesired temperature");
 					Serial.print(my_porfiles[i].temperature[0]);
@@ -277,9 +275,8 @@ void vTask2(void *pvParameters) {
 						Serial.print("\nTag not recognizable ");
 
 					p_selected = my_porfiles[i];
-					Serial.print("TAG NUMBER");
-					Serial.print(p_selected.tag_uid);
-					xStatus2 = xQueueSendToBack(xQueue2, &p_selected, 0);// queue do perfil selectionado
+					xStatus2 = xQueueSendToBack(xQueue2, &p_selected, 0); // queue do perfil selectionado
+					xStatusLCD = xQueueSendToBack(xQueueLCD, &p_selected, 0);
 					vTaskPrioritySet(xTask2Handle, (uxPriority - 2)); //apos enviar a queue com o perfil reduz a prioridade para deixar as outras correrem
 					//vTaskDelayUntil(&xLastWakeTime, (4000 / portTICK_PERIOD_MS));
 
@@ -298,126 +295,148 @@ void vTask3(void *pvParameters) {
 	float t = dht.readTemperature();
 	float temp_diff = 0;
 	int fan_rpm;
+	int PWM_levels = 255;
 	TickType_t xLastWakeTime;
 	MyPorfiles p;
 
 	portBASE_TYPE xStatus2;
 	portBASE_TYPE xStatus3;
-	portBASE_TYPE xStatus4; //Rotacoes da ventoinha
 
 	xLastWakeTime = xTaskGetTickCount();
 	for (;;) {
 		//Serial.println(F("\nTASK3 IS RUNNING"));
+		//xSemaphoreTake( xBinarySemaphore, portMAX_DELAY );//portMAX_DELAY
+
 		float t = dht.readTemperature();
 
-		xStatus3 = xQueueSendToBack(xQueue3, &t, 0);
 		xStatus2 = xQueuePeek(xQueue2, &p, 0);
-		xStatus4 = xQueuePeek(xQueue4, &fan_rpm, 0);
+		//xStatus4 = xQueuePeek(xQueue4, &fan_rpm, 0);
 
 		if (xStatus2 == pdPASS) {
+
+			// caso haja dados na queue vai receber a queue2 na variavel p
+
 			xStatus2 = xQueueReceive(xQueue2, &p, 0);
-			Serial.print("\nxQueue2 data received with tag uid: ");
-			Serial.print(p.tag_uid);
-			Serial.print("\nTemperature read: ");
-			Serial.print(t);
-			if (xStatus4 == pdPASS) {
-			}
-			Serial.print("\nxQueue4 RPM count received: ");
-			Serial.print(fan_rpm);
-			Serial.print("RPM");
 
+			if (p.tag_uid != 0) { // caso o uid seja diferente de 0 corresponde a um perfil sen\ao significa que houve reset
+				digitalWrite(signal_led, LOW);
+				Serial.print("\nxQueue2 data received with tag NUMBER: ");
+				Serial.print(p.number);
 
+				Serial.print("\nTemperature read: ");
+				Serial.print(t);
+				/*if (xStatus4 == pdPASS) {
 
-				float duty_cycle=255-((((p.fan_speed[1]-p.fan_speed[0])/2)+p.fan_speed[0])*2.55);
+				 Serial.print("\nxQueue4 RPM count received: ");
+				 Serial.print(fan_rpm);
+				 Serial.print("RPM");
+				 }*/
+				float duty_cycle =
+						 ((p.temperature[0]+ ((p.temperature[1] - p.temperature[0]) / 2)))*2.55; //Quanto maior o pwm menos velocidade da ventoinha logo a subtração
 
 				ledcWrite(PWM1_Ch, (duty_cycle));
 
+				if (t != NAN) {
+					xStatus3 = xQueueSendToBack(xQueue3, &t, 0);
+					if (t > p.temperature[1]) {
 
+						Serial.print(
 
-			if (t != NAN) {
+								"\nTemperature is too high! Setting heating resistor OFF!");
+						digitalWrite(Resistor_led, LOW);
+					} else if (t < p.temperature[0]) {
+						digitalWrite(Resistor_led, HIGH);
+						Serial.print(
 
-				if (t > p.temperature[1]) {
+								"\nTemperature is too low! Setting heating reasistor ON!");
+					}
+				} else
+					Serial.print(
 
-					Serial.println(
+					"\nTemperature was not read");
 
-					"\nTemperature is too high! Setting heating resistor OFF!");
-					digitalWrite(Resistor_led, LOW);
-				} else if (t < p.temperature[0]) {
-					digitalWrite(Resistor_led, HIGH);
-					Serial.println(
+			} else {
 
-					"\nTemperature is too low! Setting heating reasistor ON!");
-				}
-			} else
-				Serial.println(
-
-				"\nTemperature is too high! Setting heating reasistor ON!");
-
+				ledcWrite(PWM1_Ch, 255); // DESLIGAR FAN
+				Serial.print("ISR activated by button");
+				digitalWrite(Resistor_led, LOW);
+				digitalWrite(signal_led, HIGH);
+				Serial.println("XQueue2 received with reset porfile");
+			}
 		}
 
 	}
-	//vTaskDelayUntil(&xLastWakeTime, (1500 / (portTICK_PERIOD_MS)));
+
+	vTaskDelayUntil(&xLastWakeTime, (1500 / (portTICK_PERIOD_MS)));
 }
 
-void vTask4(void *pvParameters) {
-
-	Serial.print("\nTASK4 IS RUNNING");
-
-	ledcSetup(PWM1_Ch, PWM1_Freq, PWM1_Res);
-	ledcAttachPin(fan_pwm, PWM1_Ch);
-
-	for (;;) {
-
-	}
-
-	//rpm = (half_revolutions / time_task) * 60;
-}
 void vTask5(void *pvParameters) {
+	float t = 0;
+
 	TickType_t xLastWakeTime;
+	MyPorfiles p;
+
 	portBASE_TYPE xStatus2;		// queue do perfil selecionado
 	portBASE_TYPE xStatus3;		//queue da temperatura atual
-	portBASE_TYPE xStatus4;		// queue das rpm
-	MyPorfiles p;
-	float t;
 
+	p.number = 0;
+	p.temperature[0] = 0;
+	p.temperature[1] = 0;
+	p.fan_speed[0] = 0;
+	p.fan_speed[1] = 0;
+	p.tag_uid = 0;
 
 	xLastWakeTime = xTaskGetTickCount();
+
 	for (;;) {
-		xSemaphoreTake(xBinarySemaphore, 0);//task should remain in the Blocked state to wait for the semaphore indefinitely
+
+		xSemaphoreTake(xBinarySemaphoreLCD, 0);
+		if (xSemaphoreTake(xBinarySemaphoreLCD, 0) == pdTRUE)
+			Serial.print(
+					"\nwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww");
+
 		Serial.print("\nTASK5 IS RUNNING");
 
-		xStatus2 = xQueuePeek(xQueue2, &p, 0);
-		xStatus3 = xQueuePeek(xQueue3, &t, 0);
+		xStatus2 = xQueueReceive(xQueueLCD, &p, 0);
+		xStatus3 = xQueueReceive(xQueue3, &t, 0);
 		//xStatus4 = xQueuePeek(xQueue4, &rpm, 0);
-		if (digitalRead(button) == HIGH) { /*se o botao de interrupcao continuar premido seleciona se a informacao
+		if (display_mode == 1) { /*se o botao de interrupcao continuar premido seleciona se a informacao
 		 no display será o perfil selecionado ou os parametros atuais medidos*/
 
 			display.clearDisplay();
 			display.setCursor(0, 0);
 			display.print("Porfile:");
-			display.setCursor(10, 0);						//pos x=10,y=0
-			display.print(p.tag_uid);
+			display.setCursor(60, 0);						//pos x=10,y=0
+			display.println(p.number);
 			display.setCursor(0, 10);
-			display.print("Temperature:");
-			display.setCursor(15, 10);						//pos x=15,y=10
-			display.print(p.temperature[0]);
-			display.setCursor(17, 10);
-			display.print(p.temperature[1]);
+			display.print("Temp:");
+			display.setCursor(60, 10);						//pos x=15,y=10
+			display.println(p.temperature[0]);
+			display.setCursor(62, 10);
+			display.print("-");
+			display.setCursor(70, 10);
+			display.println(p.temperature[1]);
 			display.setCursor(0, 20);
 			display.print("Speed:");
+			display.setCursor(60, 20);
+			display.println(p.fan_speed[0]);
+			display.setCursor(63, 20);
+			display.print("-");
+			display.setCursor(70, 20);
+			display.println(p.fan_speed[1]);
 			display.display();
 
-		} else {
+		} else if (display_mode == -1) {
 
 			display.clearDisplay();
 			display.setCursor(0, 0);
 			display.print("Current Parameters:");
 			display.setCursor(0, 10);
 			display.print("Temperature:");
-			display.setCursor(15, 10);						//pos x=15,y=10
-			display.print(t);
-			display.setCursor(17, 10);
-			display.print("ºC");
+			display.setCursor(80, 10);						//pos x=15,y=10
+			display.println(t);
+			display.setCursor(85, 10);
+			display.print("C");
 			display.setCursor(0, 20);
 			//display.print("Speed:");
 			//display.setCursor(10, 20);
@@ -425,7 +444,8 @@ void vTask5(void *pvParameters) {
 			display.display();
 
 		}
-		vTaskDelayUntil(&xLastWakeTime, (3000 / (portTICK_PERIOD_MS)));
+		vTaskDelayUntil(&xLastWakeTime, (1000 / (portTICK_PERIOD_MS)));
+
 	}
 }
 
@@ -497,13 +517,45 @@ void printDec(byte *buffer, byte bufferSize) {
 void vInterruptHandler(void) //interrupção para mudar a tela do lcd (VTASK5)
 		{
 	static portBASE_TYPE xHigherPriorityTaskWoken;
-	xHigherPriorityTaskWoken = pdFALSE;
+	MyPorfiles p;
+	p.number = 0;
+	p.temperature[0] = 0;
+	p.temperature[1] = 0;
+	p.fan_speed[0] = 0;
+	p.fan_speed[1] = 0;
+	p.tag_uid = 0;
 
+	xHigherPriorityTaskWoken = pdFALSE;
+	xQueueSendToBackFromISR(xQueue2, &p,
+			(portBASE_TYPE*)&xHigherPriorityTaskWoken); //enviar para a queue 2 um perfil reset com todos os parametros a 0
 	xSemaphoreGiveFromISR(xBinarySemaphore,
 			(portBASE_TYPE*)&xHigherPriorityTaskWoken);
+
 	if (xHigherPriorityTaskWoken == pdTRUE) {
 		vPortYield();
 	}
+}
+void vInterruptLCD(void) //interrupção para mudar a tela do lcd (VTASK5)
+		{
+
+	static portBASE_TYPE xHigherPriorityTaskWoken;
+
+	if (display_mode == -1)
+		display_mode = 1;
+	else if (display_mode == 1)
+		display_mode = -1;
+	else
+		display_mode = 1;
+
+	Serial.print("ISR LCD ACTIVATED");
+	xHigherPriorityTaskWoken = pdFALSE;
+	xSemaphoreGiveFromISR(xBinarySemaphoreLCD,
+			(portBASE_TYPE*)&xHigherPriorityTaskWoken);
+
+	if (xHigherPriorityTaskWoken == pdTRUE) {
+		vPortYield();
+	}
+
 }
 void vMeasure_fan_speed(void) {
 	portMUX_TYPE myMutex = portMUX_INITIALIZER_UNLOCKED;
@@ -515,3 +567,4 @@ void vMeasure_fan_speed(void) {
 	taskEXIT_CRITICAL(&myMutex);
 
 }
+
