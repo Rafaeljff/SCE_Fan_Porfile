@@ -204,12 +204,9 @@ void vTask1(void *pvParameters) {
 			Serial.print("Raise the Task2 priority to ");
 			Serial.println(uxPriority + 1);
 
-			//executa de 3 em 3 segundos para detetar tags
-
 		}
 
 		xSemaphoreGive(xMutex);
-
 		vTaskDelayUntil(&xLastWakeTime, 3000 / portTICK_PERIOD_MS);
 	}
 
@@ -602,7 +599,7 @@ void vMeasure_fan_speed(void) {
 	taskENTER_CRITICAL(&myMutex);
 	{
 
-		InterruptCounter++;
+		//InterruptCounter++;
 
 		//detachInterrupt(digitalPinToInterrupt(fan_sensor));
 	}
