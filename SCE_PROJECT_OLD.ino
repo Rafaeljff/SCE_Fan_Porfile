@@ -67,7 +67,7 @@ const int onboard_button = 27;
 DHT dht(DHTPIN, DHTTYPE);
 MFRC522 rfid(SS_PIN, RST_PIN); // Instance of the class
 Adafruit_SSD1306 display = Adafruit_SSD1306(128, 32, &Wire);
-// Inicializalcão de um array para guardar os bytes do ID serie da tag
+// InicializalcÃ£o de um array para guardar os bytes do ID serie da tag
 
 void vTask1(void *pvParameters);
 void vTask2(void *pvParameters);
@@ -81,10 +81,10 @@ SemaphoreHandle_t xBinarySemaphore;
 SemaphoreHandle_t xBinarySemaphoreLCD;
 SemaphoreHandle_t xMutex;
 const char *Task1_name = "TASK1-READING RFID\r\n"; //Leitura das tags
-const char *Task2_name = "TASK2-ATRIBUICAO DE PERFIS\r\n"; //Comparação da Tag com os perfis
-const char *Task3_name = "TASK3-TRATAMENTO DE DADOS\t\n"; //Comparação da temperatura  e velocidade da ventoinha atuais com os valores estabelecidos nos perfis e atuação através de PWM na ventoinha e resitência de aquecimento on/off
+const char *Task2_name = "TASK2-ATRIBUICAO DE PERFIS\r\n"; //ComparaÃ§Ã£o da Tag com os perfis
+const char *Task3_name = "TASK3-TRATAMENTO DE DADOS\t\n"; //ComparaÃ§Ã£o da temperatura  e velocidade da ventoinha atuais com os valores estabelecidos nos perfis e atuaÃ§Ã£o atravÃ©s de PWM na ventoinha e resitÃªncia de aquecimento on/off
 const char *IDLE_TASK_name = "TASK IDLE\t\n";
-const char *Task5_name = "TASK5- LCD\r\n"; //Display da informação
+const char *Task5_name = "TASK5- LCD\r\n"; //Display da informaÃ§Ã£o
 
 /* Declare a variable of type QueueHandle_t.  This is used to store the queue
  that is accessed by tasks. */
@@ -167,7 +167,7 @@ void setup() {
 //}
 /**
  * Helper routine to dump a byte array as dec values to Serial.
- * Converte formato código ASCII para decimal
+ * Converte formato cÃ³digo ASCII para decimal
  *
  */
 
@@ -183,7 +183,7 @@ void vTask1(void *pvParameters) {
 
 		//Serial.println(F("\nTASK1 IS RUNNING"));
 		// Repeat anti collision loop
-		//Verifica se existe colisão entre leituras, entra num loop de verificação de anti colosão
+		//Verifica se existe colisÃ£o entre leituras, entra num loop de verificaÃ§Ã£o de anti colosÃ£o
 
 		/* The following line will only execute once the semaphore has been
 		 successfully obtained - so standard out can be accessed freely. */
@@ -272,7 +272,7 @@ void vTask2(void *pvParameters) {
 					Serial.print(my_porfiles[i].temperature[0]);
 					Serial.print("-");
 					Serial.print(my_porfiles[i].temperature[1]);
-					Serial.print("ºC");
+					Serial.print("ÂºC");
 					Serial.print("\nFan speed range");
 					Serial.print(my_porfiles[i].fan_speed[0]);
 					Serial.print("-");
@@ -355,7 +355,7 @@ void vTask3(void *pvParameters) {
 				 }*/
 				Serial.print(p.number);
 				float duty_cycle = ((p.temperature[0]
-						+ ((p.temperature[1] - p.temperature[0]) / 2))) * 2.55; //Quanto maior o pwm menos velocidade da ventoinha logo a subtração
+						+ ((p.temperature[1] - p.temperature[0]) / 2))) * 2.55; //Quanto maior o pwm menos velocidade da ventoinha logo a subtraÃ§Ã£o
 
 				ledcWrite(PWM1_Ch, (duty_cycle));
 
@@ -443,7 +443,7 @@ void vTask5(void *pvParameters) {
 			 successfully obtained - so standard out can be accessed freely. */
 
 			if (display_mode == 1) { /*se o botao de interrupcao continuar premido seleciona se a informacao
-			 no display será o perfil selecionado ou os parametros atuais medidos*/
+			 no display serÃ¡ o perfil selecionado ou os parametros atuais medidos*/
 				Serial.println("display 1 on ---------------------------------------------------------");
 				display.clearDisplay();
 				display.setCursor(0, 0);
@@ -541,7 +541,7 @@ void printDec(byte *buffer, byte bufferSize) {
 		Serial.print(id[i]);
 
 	}
-//Apenas manda para a queue 4 bytes, correspondentes a 1 long, porque as tags que utilizamos são apenas de 4 bytes
+//Apenas manda para a queue 4 bytes, correspondentes a 1 long, porque as tags que utilizamos sÃ£o apenas de 4 bytes
 	xStatus = xQueueSendToBack(xQueue, &Sum, 0);
 	Serial.print("\t\tSum:");
 	Serial.print(Sum);
@@ -558,7 +558,7 @@ void printDec(byte *buffer, byte bufferSize) {
 
 }
 
-void vInterruptHandler(void) //interrupção para mudar a tela do lcd (VTASK5)
+void vInterruptHandler(void) //interrupÃ§Ã£o para mudar a tela do lcd (VTASK5)
 		{
 	static portBASE_TYPE xHigherPriorityTaskWoken;
 	MyPorfiles p;
@@ -579,7 +579,7 @@ void vInterruptHandler(void) //interrupção para mudar a tela do lcd (VTASK5)
 		vPortYield();
 	}
 }
-void vInterruptLCD(void) //interrupção para mudar a tela do lcd (VTASK5)
+void vInterruptLCD(void) //interrupÃ§Ã£o para mudar a tela do lcd (VTASK5)
 		{
 
 	static portBASE_TYPE xHigherPriorityTaskWoken;
