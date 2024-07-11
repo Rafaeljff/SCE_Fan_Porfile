@@ -8,7 +8,7 @@ SCE - Sistemas Computacionais Embebidos
 TPF: Pretende-se  neste  trabalho  prático  a  implementação  de um  algoritmo  que  
 permita  o controlo de um sistema de aquecimento através de tags RFID, utilizando 
 um sistema operativo de tempo real FreeRTOS.
-LINK Github: https://gist.github.com/TheLittleBigFish/6503ef507823a01b8adc039de2279279
+
 */
 
 #include "Arduino.h"
