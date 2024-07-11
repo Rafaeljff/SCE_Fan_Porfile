@@ -1,565 +1,646 @@
+/*
+Rafael Ferreira - 2172044
+Ruben Susano - 2192281
+IPLEIRIA - Instituto PolitÃ©cnico de Leiria
+ESTG - Escola Superior de Tecnologia e GestÃ£o
+LEEC - Licenciatura em Engenharia EletrotÃ©cnica e de Computadores
+SCE - Sistemas Computacionais Embebidos
+TPF: Pretende-se  neste  trabalho  prÃ¡tico  a  implementaÃ§Ã£o  de um  algoritmo  que  
+permita  o controlo de um sistema de aquecimento atravÃ©s de tags RFID, utilizando 
+um sistema operativo de tempo real FreeRTOS.
+LINK Github: https://gist.github.com/TheLittleBigFish/6503ef507823a01b8adc039de2279279
+*/
+
 #include "Arduino.h"
-#include <SPI.h>
-#include <MFRC522.h>
-#include <Wire.h>
 #include <stdio.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "esp_task_wdt.h"
 #include "esp_freertos_hooks.h"
-
-#include <Adafruit_Sensor.h>
-#include <DHT.h>
-#include <DHT_U.h>
-
+// For LCD
+#include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+// For RFID
+#include <SPI.h>
+#include <MFRC522.h>
 
-/*RC522-SPI
- SDA-GPIO5
- MISO-GPIO19
- MOSI-GPIO23
- SCK-GPIO18
- RST-EN-Pin9
- /*
- /*DHT11-Serial
- VCC-5V
- GND-0V
- DATA- GPIO4/*
- /*LCD SSD1306 128x32-I2C
- Slave ADDRESS-0X3C
- SDA-GPIO21
- SCL-GPIO22
- VCC-3.3V
- GND-0V
- */
+// Heater
+#define LED_PIN 2
+#define ADC_1_6 34
+#define ADC_RESOLUTION 12
+#define VREF_PLUS  5
+#define VREF_MINUS  0
 
-#define mainDELAY_LOOP_COUNT  4000000
-#define SS_PIN 5
-#define RST_PIN 9
-#define DHTPIN 4     // what pin we're connected to
-#define DHTTYPE DHT11
-#define tag_count 3
-
-#define PWM1_Ch    2
-#define PWM1_Res   8
-#define PWM1_Freq  15000
+// For LCD
+#define LCD_ADDRESS_1 0x3C
+#define LCD_ADDRESS_2 0x3D
 
 #define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 32 // OLED display height, in pixels
+#define SCREEN_HEIGHT 64 // OLED display height, in pixels
 
-typedef struct Porfiles {
-	int number;
-	int temperature[2];
-	int fan_speed[2];
-	long tag_uid;
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 
-} MyPorfiles;
+// For RFID
+#define SS_PIN 5
+#define RST_PIN 27
 
-const int Resistor_led = 13;
-const int fan_pwm = 16;
-const int button = 17;
-const int fan_sensor = 32;
-const int signal_led = 26;
-const int onboard_button = 27;
-DHT dht(DHTPIN, DHTTYPE);
-MFRC522 rfid(SS_PIN, RST_PIN); // Instance of the class
-Adafruit_SSD1306 display = Adafruit_SSD1306(128, 32, &Wire);
-// Inicializalcão de um array para guardar os bytes do ID serie da tag
+MFRC522 rfid(SS_PIN, RST_PIN);   // Create MFRC522 instance.
 
-void vTask1(void *pvParameters);
-void vTask2(void *pvParameters);
-void vTask3(void *pvParameters);
+// For Fan
+#define FAN_PWM_PIN 4
+#define PWM_FREQ 5000
+#define FANCHANNEL 1
+#define RESULUTION 8
+#define FAN_INTERRUPT 15
+#define FAN_RPM_MAX 13000 //1500
 
-void vTask5(void *pvParameters);
-bool my_vApplicationIdleHook(void);
+// For Interrupt clear
+#define INPUT_PIN 0
 
-TaskHandle_t xTask2Handle;
-SemaphoreHandle_t xBinarySemaphore;
-SemaphoreHandle_t xBinarySemaphoreLCD;
+//QUEUES
+QueueHandle_t xQueueSensors;
+QueueHandle_t xQueueRFID;
+QueueHandle_t xQueueProfile;
+
+//SHEMAPHORE
+SemaphoreHandle_t xBinarySemaphoreClear;
+
+//Mutex
+portMUX_TYPE myMutex = portMUX_INITIALIZER_UNLOCKED;
+portMUX_TYPE counterMutex = portMUX_INITIALIZER_UNLOCKED;
 SemaphoreHandle_t xMutex;
-const char *Task1_name = "TASK1-READING RFID\r\n"; //Leitura das tags
-const char *Task2_name = "TASK2-ATRIBUICAO DE PERFIS\r\n"; //Comparação da Tag com os perfis
-const char *Task3_name = "TASK3-TRATAMENTO DE DADOS\t\n"; //Comparação da temperatura  e velocidade da ventoinha atuais com os valores estabelecidos nos perfis e atuação através de PWM na ventoinha e resitência de aquecimento on/off
-const char *IDLE_TASK_name = "TASK IDLE\t\n";
-const char *Task5_name = "TASK5- LCD\r\n"; //Display da informação
 
-/* Declare a variable of type QueueHandle_t.  This is used to store the queue
- that is accessed by tasks. */
-QueueHandle_t xQueue; // tag uid
-QueueHandle_t xQueue2; // Queue com os perfis associados
-QueueHandle_t xQueue3; // real time fan speed
-QueueHandle_t xQueueLCD;
-QueueHandle_t xQueueRPM;
-volatile long InterruptCounter;
-//volatile int display_mode;
+// Structs
+typedef struct sensorVal {
+    float temp;
+    float speed;
+} SensorValues;
+
+typedef struct RFIDVal {
+    long RFIDcodeLSB;
+    long RFIDcodeMSB;
+    int RFIDsize;
+} RFIDValues;
+
+typedef struct RFIDProf {
+    int ProfileNumber;
+    int PWM;
+    int Temp[2];
+    char ProfileName[6];
+} RFIDProfiles;
+
+static void updateVelTemp(void *pvParameters);
+static void allRFIDProfiles(void *pvParameters);
+static void readRFIDSensorTask(void *pvParameters);
+static void readSensorsTask(void *pvParameters);
+static void updateLCDPCTask(void *pvParameters);
+void clearStop(void *pvParameters);
+bool my_vApplicationIdleHook(void);
+void IRAM_ATTR clear_EVENT(void);
+void IRAM_ATTR counter_EVENT(void);
+
+static char *pcStringsToPrint[] = { "Run: -------- Task Read RFID -------\r\n",
+        "Run: ------ Task Read Sensors ------\r\n",
+        "Run: -------- Task Write LCD -------\r\n",
+        "Run: ----- Task Decide Profile -----\r\n",
+        "Run: -------- Task Vel Temp --------\r\n",
+        "Run: Clear ------------------- Clear\r\n" };
+
+volatile unsigned long ticksCounted;
+
+/**
+ * The setup function is called once at startup of the sketch
+ */
 void setup() {
+    TickType_t xLastWakeTime;
 
-	vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
-	esp_register_freertos_idle_hook(my_vApplicationIdleHook);
+    // Idle Task
+    esp_register_freertos_idle_hook(my_vApplicationIdleHook);
 
-	Wire.begin();
-	Serial.begin(9600);
-	SPI.begin(); // Init SPI bus
-	rfid.PCD_Init(); // Init MFRC522
-	dht.begin();
-	display.begin(SSD1306_SWITCHCAPVCC, 0x3C); // Address 0x3C for 128x32
-	pinMode(Resistor_led, OUTPUT);
-	pinMode(signal_led, OUTPUT);
-	digitalWrite(signal_led, LOW);
-	pinMode(fan_sensor, INPUT);
+    // define Pins
+    pinMode(LED_PIN, OUTPUT);
+    digitalWrite(LED_PIN, LOW);
 
-	pinMode(button, OUTPUT);
-	attachInterrupt(button, vInterruptHandler, FALLING);
-	attachInterrupt(onboard_button, vInterruptLCD, FALLING);
-	attachInterrupt(fan_sensor, vMeasure_fan_speed, RISING);
-	ledcSetup(PWM1_Ch, PWM1_Freq, PWM1_Res);
-	ledcAttachPin(fan_pwm, PWM1_Ch);
+    // Set loopTask max priority before deletion
+    vTaskPrioritySet(NULL, configMAX_PRIORITIES - 1);
 
-	xQueue = xQueueCreate(1, sizeof(int));
-	xQueue2 = xQueueCreate(1, sizeof(MyPorfiles));
-	xQueue3 = xQueueCreate(1, sizeof(float));
-	xQueueRPM = xQueueCreate(1, sizeof(float)); //queue para guardar as rpm
-	xQueueLCD = xQueueCreate(1, sizeof(MyPorfiles));
-	vSemaphoreCreateBinary(xBinarySemaphore);
-	vSemaphoreCreateBinary(xBinarySemaphoreLCD);
-	xMutex = xSemaphoreCreateMutex();
+    // Set I2C for LCD
+    if (!display.begin(SSD1306_SWITCHCAPVCC, LCD_ADDRESS_1)) {
+        Serial.println(F("Error: -------- SSD1306 allocation failed -------"));
+        for (;;)
+            ;
+    }
 
-	display.clearDisplay();
-	display.setTextSize(1);
-	display.setTextColor(SSD1306_WHITE);
-	display.setCursor(0, 0);
-	display.println("SCE-Projeto");
-	display.setCursor(0, 10);
-	display.print("Realizado por:");
-	display.setCursor(0, 20);
-	display.print("Ruben");
-	display.setCursor(35, 20);
-	display.print("e Rafael ");
-	display.display();
-	vTaskDelay(5000 / portTICK_PERIOD_MS);
-	if (xQueue != NULL && xQueue2 != NULL && xQueue3 != NULL
-			&& xQueueLCD != NULL && xBinarySemaphore != NULL
-			&& xBinarySemaphore != NULL) {
-		xTaskCreatePinnedToCore(vTask1, "RFID Reader Task", 1024,
-				(void*) Task1_name, 4, NULL, 1);
-		xTaskCreatePinnedToCore(vTask2, "Porfile Selection Task", 1024,
-				(void*) Task2_name, 3, &xTask2Handle, 1);
-		xTaskCreatePinnedToCore(vTask3, "Data Processing Task", 1024,
-				(void*) Task3_name, 5, NULL, 1);
-		xTaskCreatePinnedToCore(vTask5, "LCD Display Task", 1024,
-				(void*) Task5_name, 1, NULL, 1);
+    display.display();
+    vTaskDelayUntil(&xLastWakeTime, (2000 / portTICK_PERIOD_MS));
+    display.clearDisplay();
+    display.setTextColor(WHITE);
 
-	}
+    // Initiate USART and set Baud-rate to 115200
+    Serial.begin(115200);
+
+    // Initiate the RFID
+    SPI.begin();      // Initiate  SPI bus
+    rfid.PCD_Init();
+
+    // Initiate PWM
+    ledcSetup(FANCHANNEL, PWM_FREQ, RESULUTION);
+    ledcAttachPin(FAN_PWM_PIN, FANCHANNEL);
+
+    ledcWrite(FANCHANNEL, 255);
+
+    // Define queues
+    xQueueSensors = xQueueCreate(4, sizeof(SensorValues));
+    xQueueRFID = xQueueCreate(4, sizeof(RFIDValues));
+    xQueueProfile = xQueueCreate(4, sizeof(RFIDProfiles));
+
+    // Define Semaphore
+    xBinarySemaphoreClear = xSemaphoreCreateBinary();
+
+    // Define mutex
+    xMutex = xSemaphoreCreateMutex();
+
+    if (xQueueSensors != NULL && xQueueRFID != NULL && xQueueProfile != NULL
+            && xBinarySemaphoreClear != NULL && xMutex != NULL) {
+        xTaskCreatePinnedToCore(readRFIDSensorTask, "ReadRFID", 1024, (void*) 0,
+                3, NULL, 1);
+
+        xTaskCreatePinnedToCore(readSensorsTask, "ReadSensor", 1024, (void*) 1,
+                2, NULL, 1);
+
+        xTaskCreatePinnedToCore(updateLCDPCTask, "UpdateLCDandPC", 2048,
+                (void*) 2, 1, NULL, 1);
+
+        xTaskCreatePinnedToCore(allRFIDProfiles, "DecideProfile", 1024,
+                (void*) 3, 4, NULL, 1);
+
+        xTaskCreatePinnedToCore(updateVelTemp, "UpdateVelocityTemperature",
+                1024, (void*) 4, 2, NULL, 1);
+
+        xTaskCreatePinnedToCore(clearStop, "Clear", 1024, (void*) 5, 4, NULL,
+                1);
+
+        // ADC Resolution
+        analogReadResolution(ADC_RESOLUTION);
+
+        //interrupts
+        attachInterrupt(digitalPinToInterrupt(FAN_INTERRUPT), counter_EVENT,
+        CHANGE);
+        attachInterrupt(digitalPinToInterrupt(INPUT_PIN), clear_EVENT,
+        RISING);
+        interrupts();
+
+        xSemaphoreGive(xBinarySemaphoreClear);
+    }
 }
 
-void vTask1(void *pvParameters) {
-	TickType_t xLastWakeTime;
-	unsigned portBASE_TYPE uxPriority;
-	xLastWakeTime = xTaskGetTickCount();
-	// Recebe prioridade da tarefa
+/**
+ * Atualiza a velocidade e temperatura da ventoinha e resistencia termica
+ */
+static void updateVelTemp(void *pvParameters) {
+    TickType_t xLastWakeTime;
+    RFIDProfiles rfidProfiles;
+    SensorValues values;
+    portBASE_TYPE xStatusSensores;
+    portBASE_TYPE xStatusProfile;
 
-	for (;;) {
+    xLastWakeTime = xTaskGetTickCount();
 
-		Serial.print("\nTASK1 IS RUNNING");
-		// Repeat anti collision loop
-		//Verifica se existe colisão entre leituras, entra num loop de verificação de anti colosão
+    for (;;) {
+        vTaskDelayUntil(&xLastWakeTime, (2000 / portTICK_PERIOD_MS));
 
-		/* The following line will only execute once the semaphore has been
-		 successfully obtained - so standard out can be accessed freely. */
-		xSemaphoreTake(xMutex, portMAX_DELAY);
-		if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
+        Serial.print(pcStringsToPrint[(int) pvParameters]);
+        Serial.flush();
 
-			Serial.println(F("Tag:"));
-			printDec(rfid.uid.uidByte, rfid.uid.size);
-			Serial.println();
+        xStatusProfile = xQueuePeek(xQueueProfile, &rfidProfiles, 0);
+        xStatusSensores = xQueuePeek(xQueueSensors, &values, 0);
 
-			// Halt PICC
-			rfid.PICC_HaltA();
-			// Stop encryption on PCD
-			rfid.PCD_StopCrypto1();
-			//vTaskPrioritySet(xTask2Handle, (uxPriority + 2));
-			uxPriority = uxTaskPriorityGet( NULL);
-			vTaskPrioritySet(xTask2Handle, (uxPriority + 1));
-			Serial.print("Raise the Task2 priority to ");
-			Serial.println(uxPriority + 1);
+        if (xStatusSensores == pdPASS && xStatusProfile == pdPASS) {
+            if (rfidProfiles.ProfileNumber != 0) {
+                Serial.print("Temp: ");
+                Serial.println(values.temp);
+                Serial.println(rfidProfiles.Temp[0]);
+                Serial.println(rfidProfiles.Temp[1]);
 
-		}
+                if (values.temp < rfidProfiles.Temp[0])
+                    //ON
+                    digitalWrite(LED_PIN, HIGH);
+                else if (values.temp > rfidProfiles.Temp[1])
+                    //OFF
+                    digitalWrite(LED_PIN, LOW);
+            } else {
+                Serial.println("Clear");
+                digitalWrite(LED_PIN, LOW);
+                //ledcWrite(FANCHANNEL, 255);
+            }
 
-		xSemaphoreGive(xMutex);
-		vTaskDelayUntil(&xLastWakeTime, 3000 / portTICK_PERIOD_MS);
-	}
+            int perc = 0;
+            switch (rfidProfiles.PWM) {
+            case 0:
+                perc = 0;
+                break;
+            case 1:
+                perc = 50;
+                break;
+            case 2:
+                perc = 100;
+                break;
+            default:
+                perc = 0;
+            }
 
+            float speed = perc + (100 - values.speed);
+            Serial.print("Speed: ");
+            Serial.println(speed);
+
+            if (speed >= 100)
+                ledcWrite(FANCHANNEL, 0);
+            else {
+                if (speed <= 0)
+                    ledcWrite(FANCHANNEL, 255);
+                else {
+                    int speed100 = ((100 - speed) * 255) / 100;
+                    Serial.println(speed100);
+                    ledcWrite(FANCHANNEL, speed100);
+                }
+            }
+        }
+    }
 }
 
-void vTask2(void *pvParameters) {
+/**
+ * Guarda todos os prefies de RFID
+ */
+static void allRFIDProfiles(void *pvParameters) {
+    SensorValues values;
+    RFIDValues rfidValues;
+    RFIDProfiles rfidProfiles;
+    RFIDProfiles ProfileClean;
+    portBASE_TYPE xStatusRFID;
+    portBASE_TYPE xStatusProfile;
 
-	char *Task_Name;
-	int lReceivedValue;
+    rfidValues = { 0, 0, 0 };
 
-	unsigned portBASE_TYPE uxPriority;
+    for (;;) {
+        xStatusRFID = xQueueReceive(xQueueRFID, &rfidValues, portMAX_DELAY);
 
-	TickType_t xLastWakeTime;
-	MyPorfiles my_porfiles[3];
-	MyPorfiles p_selected;
+        if (xStatusRFID == pdPASS) {
+            Serial.print(pcStringsToPrint[(int) pvParameters]);
+            Serial.flush();
 
-	my_porfiles[0].number = 605;
-	my_porfiles[0].temperature[0] = 20;
-	my_porfiles[0].temperature[1] = 21;
-	my_porfiles[0].fan_speed[0] = 10;
-	my_porfiles[0].fan_speed[1] = 20;
-	my_porfiles[0].tag_uid = 39200186180;
-	my_porfiles[1].number = 526;
-	my_porfiles[1].temperature[0] = 18;
-	my_porfiles[1].temperature[1] = 20;
-	my_porfiles[1].fan_speed[0] = 30;
-	my_porfiles[1].fan_speed[1] = 80;
-	my_porfiles[1].tag_uid = 12147227140;
-	my_porfiles[2].number = 151;
-	my_porfiles[2].temperature[0] = 16;
-	my_porfiles[2].temperature[1] = 20;
-	my_porfiles[2].fan_speed[0] = 80;
-	my_porfiles[2].fan_speed[1] = 100;
-	my_porfiles[2].tag_uid = 2365954;
+            long LSBProfile[4] = { 401, 534, 372, 647 };
+            long MSBProfile[4] = { 0, 0, 0, 0 };
 
-	portBASE_TYPE xStatus;
-	portBASE_TYPE xStatus2;
-	portBASE_TYPE xStatusLCD;
-	xLastWakeTime = xTaskGetTickCount();
+            long LSB = rfidValues.RFIDcodeLSB;
+            long MSB = rfidValues.RFIDcodeMSB;
 
-	for (;;) {
-		Serial.print("\nTASK2 IS RUNNING");
+            // Profile 1
+            // Speed 0 - 0% / 1 - 50% / 2 - 100%
+            if (LSB == LSBProfile[0] && MSB == MSBProfile[0]) {
+                rfidProfiles.ProfileNumber = 1;
+                strcpy(rfidProfiles.ProfileName, "Joao");
+                rfidProfiles.PWM = 1;
+                rfidProfiles.Temp[0] = 10;
+                rfidProfiles.Temp[1] = 20;
+            } else if (LSB == LSBProfile[1] && MSB == MSBProfile[1]) {
+                rfidProfiles.ProfileNumber = 2;
+                strcpy(rfidProfiles.ProfileName, "Manel");
+                rfidProfiles.PWM = 0;
+                rfidProfiles.Temp[0] = 15;
+                rfidProfiles.Temp[1] = 25;
+            } else if (LSB == LSBProfile[2] && MSB == MSBProfile[2]) {
+                rfidProfiles.ProfileNumber = 3;
+                strcpy(rfidProfiles.ProfileName, "Pedro");
+                rfidProfiles.PWM = 2;
+                rfidProfiles.Temp[0] = 20;
+                rfidProfiles.Temp[1] = 25;
+            } else if (LSB == LSBProfile[3] && MSB == MSBProfile[3]) {
+                rfidProfiles.ProfileNumber = 4;
+                strcpy(rfidProfiles.ProfileName, "Jaquim");
+                rfidProfiles.PWM = 1;
+                rfidProfiles.Temp[0] = 25;
+                rfidProfiles.Temp[1] = 30;
+            } else {
+                Serial.println("Error: ----- Profile does not exist --------");
+                continue;
+            }
 
-		xStatus = xQueueReceive(xQueue, &lReceivedValue, 0);
+            while (uxQueueMessagesWaiting(xQueueProfile) >= 1)
+                xQueueReceive(xQueueProfile, &ProfileClean, 0);
 
-		if (xStatus == pdPASS) {
-			uxPriority = uxTaskPriorityGet( NULL);
-			Serial.print("\nxQueue data received: ");
-			Serial.println(lReceivedValue);
+            xStatusProfile = xQueueSendToBack(xQueueProfile, &rfidProfiles, 0);
 
-			for (int i = 0; i < tag_count; i++) {
-				Serial.print("\nTASK2 IS RUNNING");
-				if (lReceivedValue == my_porfiles[i].number) {
-					Serial.print("\nPorfile with tag ");
-					Serial.print(my_porfiles[i].number);
-					Serial.print("\tselected");
-					Serial.print("\nDesired temperature");
-					Serial.print(my_porfiles[i].temperature[0]);
-					Serial.print("-");
-					Serial.print(my_porfiles[i].temperature[1]);
-					Serial.print("ºC");
-					Serial.print("\nFan speed range");
-					Serial.print(my_porfiles[i].fan_speed[0]);
-					Serial.print("-");
-					Serial.print(my_porfiles[i].fan_speed[1]);
-					Serial.print("%");
+            if (xStatusProfile != pdPASS) {
+                Serial.print(
+                        "Error: ----- Could not send to the queue. --------\r\n");
+            }
+        }
+    }
 
-					if (i == tag_count
-							&& lReceivedValue != my_porfiles[i].number)
-						Serial.print("\nTag not recognizable ");
-
-					p_selected = my_porfiles[i];
-					xStatus2 = xQueueSendToBack(xQueue2, &p_selected, 0); // queue do perfil selectionado
-					xStatusLCD = xQueueSendToBack(xQueueLCD, &p_selected, 0);
-
-					vTaskPrioritySet(xTask2Handle, (uxPriority - 2)); //apos enviar a queue com o perfil reduz a prioridade para deixar as outras correrem
-					//vTaskDelayUntil(&xLastWakeTime, (4000 / portTICK_PERIOD_MS));
-
-				}
-
-			}
-		}
-		vTaskDelayUntil(&xLastWakeTime, (2000 / (portTICK_PERIOD_MS)));
-	}
-
+    //}
 }
 
-void vTask3(void *pvParameters) {
-	float t = dht.readTemperature();
-	float temp_diff = 0;
-	long fan_rpm_percentage=0;
-	int PWM_level = 255;
-	TickType_t xLastWakeTime;
-	MyPorfiles p;
+/**
+ * Le o cartao RFID e envia a soma dos bytes do mesmo
+ */
+static void readRFIDSensorTask(void *pvParameters) {
+    TickType_t xLastWakeTime;
+    RFIDValues rfidValues;
+    portBASE_TYPE xStatus;
 
-	portBASE_TYPE xStatus2;
-	portBASE_TYPE xStatus3;
+    xLastWakeTime = xTaskGetTickCount();
 
-	xLastWakeTime = xTaskGetTickCount();
-	for (;;) {
+    rfidValues = { 0, 0, 4 };
 
-fan_rpm_percentage = (((InterruptCounter*5) / 1.50)* 60)/(3000*100); // (((ticks*n_laminas)/xLastTimeAwake)*60)/(max_rpm*100%)
+    //infinite for loop
+    for (;;) {
+        vTaskDelayUntil(&xLastWakeTime, (250 / portTICK_PERIOD_MS));
 
-InterruptCounter=0;
-Serial.print("\nRPM PERCENTAGE:--------------------");
-		Serial.println(fan_rpm_percentage);
+        //print the task number to serial COM
+        Serial.print(pcStringsToPrint[(int) pvParameters]);
+        Serial.flush();
 
-		if (fan_rpm_percentage > p.fan_speed[1])
-			ledcWrite(PWM1_Ch, (PWM_level--));
-		else if (p.fan_speed[0] > fan_rpm_percentage)
-			ledcWrite(PWM1_Ch, (PWM_level ++));
+        // Look for new cards
+        xSemaphoreTake(xMutex, portMAX_DELAY);
+        {
+            if (rfid.PICC_IsNewCardPresent()) {
+                if (rfid.PICC_ReadCardSerial()) {
+                    long double *rfidSum = 0;
 
-		xStatus2 = xQueueReceive(xQueue2, &p, 0);
-		//xStatus4 = xQueuePeek(xQueue4, &fan_rpm, 0);
+                    Serial.println("Card read");
+                    MFRC522::PICC_Type piccType = rfid.PICC_GetType(
+                            rfid.uid.sak);
 
-		if (xStatus2 == pdPASS) {
-			float t = dht.readTemperature();
-			// caso haja dados na queue vai receber a queue2 na variavel p
+                    byte rfidCode[10] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+                    rfidValues.RFIDcodeLSB = 0;
+                    rfidValues.RFIDcodeMSB = 0;
 
+                    for (int i = 0; i < rfid.uid.size; i++) {
+                        rfidCode[i] = rfid.uid.uidByte[i];
 
+                        Serial.print(rfid.uid.uidByte[i] < 0x10 ? " 0" : " ");
+                        Serial.print(rfid.uid.uidByte[i], HEX);
 
-			if (p.tag_uid != 0) { // caso o uid seja diferente de 0 corresponde a um perfil senao significa que houve reset
-				digitalWrite(signal_led, LOW);
-				Serial.print("\nxQueue2 data received with tag NUMBER: ");
-				Serial.print(p.number);
+                        if (i < 5)
+                            rfidValues.RFIDcodeLSB += rfid.uid.uidByte[i];
+                        else
+                            rfidValues.RFIDcodeMSB += rfid.uid.uidByte[i];
+                    }
 
-				Serial.print("\nTemperature read: ");
-				Serial.print(t);
+                    rfidValues.RFIDsize = rfid.uid.size;
 
+                    Serial.println();
+                    Serial.print("LSB: ");
+                    Serial.println(rfidValues.RFIDcodeLSB);
+                    Serial.print("MSB: ");
+                    Serial.println(rfidValues.RFIDcodeMSB);
 
-				Serial.print(p.number);
+                    xStatus = xQueueSendToBack(xQueueRFID, &rfidValues, 0);
 
+                    if (xStatus != pdPASS) {
+                        Serial.print(
+                                "Error: ----- Could not send to the queue. --------\r\n");
+                    }
+                }
+            }
+        }
+        xSemaphoreGive(xMutex);
 
-				if (t != NAN) {
-
-					if (t > p.temperature[1]) {
-
-						Serial.print(
-
-								"\nTemperature is too high! Setting heating resistor OFF!");
-						digitalWrite(Resistor_led, LOW);
-					} else if (t < p.temperature[0]) {
-						digitalWrite(Resistor_led, HIGH);
-						Serial.print(
-
-								"\nTemperature is too low! Setting heating reasistor ON!");
-					}
-				} else {
-					Serial.print(
-
-					"\nTemperature was not read");
-					t = 20;
-				}
-				xStatus3 = xQueueSendToBack(xQueue3, &t, 0);
-			} else {
-
-				ledcWrite(PWM1_Ch, 255); // DESLIGAR FAN
-				Serial.print("ISR activated by button");
-				digitalWrite(Resistor_led, LOW);
-				digitalWrite(signal_led, HIGH);
-				Serial.println("XQueue2 received with reset porfile");
-			}
-		}
-		vTaskDelayUntil(&xLastWakeTime, (1500 / (portTICK_PERIOD_MS)));
-
-	}
-
-
+    }
 }
 
-void vTask5(void *pvParameters) {
-	float t = 0;
-	int display_mode = -1;
+/**
+ * Le os valores dos sensores de temperatura e velocidade
+ */
+static void readSensorsTask(void *pvParameters) {
+    TickType_t xLastWakeTime;
+    int analog_value;
+    float analog_voltage;
+    float temp;
+    SensorValues values;
+    SensorValues ValuesClean;
+    portBASE_TYPE xStatus;
 
-	TickType_t xLastWakeTime;
-	MyPorfiles p;
+    xLastWakeTime = xTaskGetTickCount();
 
-	portBASE_TYPE xStatus2;		// queue do perfil selecionado
-	portBASE_TYPE xStatus3;		//queue da temperatura atual
-	portBASE_TYPE Semaphore_status;
-	portBASE_TYPE LCD_status;
-	p.number = 0;
-	p.temperature[0] = 0;
-	p.temperature[1] = 0;
-	p.fan_speed[0] = 0;
-	p.fan_speed[1] = 0;
-	p.tag_uid = 0;
+    //infinite for loop
+    for (;;) {
+        //print the task number to serial COM
+        Serial.print(pcStringsToPrint[(int) pvParameters]);
+        Serial.flush();
 
-	xLastWakeTime = xTaskGetTickCount();
+        //----------
 
-	for (;;) {
+        //change led HIGH
+        analog_value = analogRead(ADC_1_6);
+        analog_voltage = analog_value * (VREF_PLUS - VREF_MINUS)
+                / (pow(2.0, ADC_RESOLUTION)) + VREF_MINUS;
+        // Temperature = voltage/Celsius
+        temp = analog_voltage * 100;
 
-		Semaphore_status = xSemaphoreTake(xBinarySemaphoreLCD, 0);
-		if (Semaphore_status == pdTRUE) {
+        values.temp = temp;
 
-			//LCD_status = xQueueReceive(xQueueLCD_select, &display_mode, 0);
-			if (display_mode == -1) {
-				display_mode = 1;
-			} else {
-				display_mode = -1;
-			}
-			//LCD_status = xQueueSendToBack(xQueueLCD_select, &display_mode, 0); // queue do perfil selectionado
-			Serial.print("Display mode:");
-			Serial.print(display_mode);
-		}
+        Serial.print("Ticks: ");
+        Serial.println(ticksCounted);
 
-		Serial.print("\nTASK5 IS RUNNING");
-		while (uxQueueMessagesWaiting(xQueueLCD) >= 1)
-		xStatus2 = xQueuePeek(xQueueLCD, &p, 0);
-		while (uxQueueMessagesWaiting(xQueue3) >= 1)
-		xStatus3 = xQueuePeek(xQueue3, &t, 0);
-		//if (xStatus2 == pdPASS && xStatus3 == pdPASS) {
-		xSemaphoreTake(xMutex, portMAX_DELAY);
-		{
-			/* The following line will only execute once the semaphore has been
-			 successfully obtained - so standard out can be accessed freely. */
+        portENTER_CRITICAL(&counterMutex);
+        {
+            //2 Hall sensor
+            //values.speed = ((((ticksCounted / 2) / 1.5) * 60 / 2) / FAN_RPM_MAX)* 100;
+            //1 Hall sensor
+            values.speed = ((((ticksCounted / 2) / 1.5) * 60) / FAN_RPM_MAX)* 100;
+            ticksCounted = 0;
+        }
+        portEXIT_CRITICAL(&counterMutex);
 
-			if (display_mode == 1) { /*se o botao de interrupcao continuar premido seleciona se a informacao
-			 no display será o perfil selecionado ou os parametros atuais medidos*/
+        Serial.print("In Task Temp: ");
+        Serial.println(values.temp);
 
-				display.clearDisplay();
-				display.setCursor(0, 0);
-				display.print("Porfile:");
-				display.setCursor(60, 0);						//pos x=10,y=0
-				display.println(p.number);
-				display.setCursor(0, 10);
-				display.print("Temp:");
-				display.setCursor(60, 10);						//pos x=15,y=10
-				display.println(p.temperature[0]);
-				display.setCursor(62, 10);
-				display.print("-");
-				display.setCursor(70, 10);
-				display.println(p.temperature[1]);
-				display.setCursor(0, 20);
-				display.print("Speed:");
-				display.setCursor(60, 20);
-				display.println(p.fan_speed[0]);
-				display.setCursor(65, 20);
-				display.print("-");
-				display.setCursor(75, 20);
-				display.println(p.fan_speed[1]);
-				display.display();
+        Serial.print("In Task Velocity: ");
+        Serial.print(values.speed);
+        Serial.println(" %");
 
-			} else if (display_mode == -1) {
+        while (uxQueueMessagesWaiting(xQueueSensors) >= 1)
+            xQueueReceive(xQueueSensors, &ValuesClean, 0);
 
-				display.clearDisplay();
-				display.setCursor(0, 0);
-				display.print("Current Parameters:");
-				display.setCursor(0, 10);
-				display.print("Temperature:");
-				display.setCursor(80, 10);						//pos x=15,y=10
-				display.println(t);
-				display.setCursor(85, 10);
-				display.print("C");
-				display.setCursor(0, 20);
+        xStatus = xQueueSendToBack(xQueueSensors, &values, 0);
+        if (xStatus != pdPASS) {
+            /* We could not write to the queue because it was full, this must
+             be an error as the queue should never contain more than one item! */
+            Serial.print(
+                    "Error: ----- Could not send to the queue. --------\r\n");
+        }
 
-
-				display.display();
-			}
-		}
-	//}
-		xSemaphoreGive(xMutex);
-		vTaskDelayUntil(&xLastWakeTime, (1000 / (portTICK_PERIOD_MS)));
-
-	}
+        vTaskDelayUntil(&xLastWakeTime, (1500 / portTICK_PERIOD_MS));
+    }
 }
 
+/**
+ * Altera os valores amostrados no LCD
+ */
+static void updateLCDPCTask(void *pvParameters) {
+    TickType_t xLastWakeTime;
+    SensorValues values;
+    RFIDProfiles rfidProfile;
+    portBASE_TYPE xStatusSensores;
+    portBASE_TYPE xStatusProfile;
+    const TickType_t xTicksToWait = 100 / portTICK_PERIOD_MS;
+
+    xLastWakeTime = xTaskGetTickCount();
+
+    //infinite for loop
+    for (;;) {
+        //print the task number to serial COM
+        Serial.print(pcStringsToPrint[(int) pvParameters]);
+        Serial.flush();
+
+        xStatusSensores = xQueuePeek(xQueueSensors, &values, xTicksToWait);
+        xStatusProfile = xQueuePeek(xQueueProfile, &rfidProfile, 0);
+
+        if (xStatusSensores == pdPASS && xStatusProfile == pdPASS) {
+            // LCD display
+
+            xSemaphoreTake(xMutex, portMAX_DELAY);
+            {
+                display.clearDisplay();
+
+                display.setTextSize(1);
+                display.setCursor(0, 0);
+                display.print("RFID Profile: ");
+                display.print(rfidProfile.ProfileName);
+                // display temperature
+                display.setTextSize(1);
+                display.setCursor(0, 10);
+                display.print("Temperature: ");
+                display.print(rfidProfile.Temp[0]);
+                display.print("-");
+                display.print(rfidProfile.Temp[1]);
+                display.print(" ");
+                display.cp437(true);
+                display.write(167);
+                display.print("C");
+
+                display.setTextSize(2);
+                display.setCursor(0, 20);
+                display.print(String(values.temp));
+                display.print(" ");
+                display.setTextSize(1);
+                display.cp437(true);
+                display.write(167);
+                display.setTextSize(2);
+                display.print("C");
+
+                display.setTextSize(1);
+                display.setCursor(0, 40);
+                display.print("Velocity: ");
+                display.setTextSize(2);
+                display.setCursor(0, 50);
+                display.print(rfidProfile.PWM);
+
+                vTaskPrioritySet(NULL, 10);
+
+                // display in LCD
+                display.display();
+
+                vTaskPrioritySet(NULL, 1);
+            }
+            xSemaphoreGive(xMutex);
+
+            Serial.print("Display done \r\n");
+
+        } else {
+            /* We did not receive anything from the queue even after waiting for
+             100ms.*/
+            Serial.print(
+                    "Error: ----- Could not receive from the queue. --------\r\n");
+        }
+
+        vTaskDelayUntil(&xLastWakeTime, (1000 / portTICK_PERIOD_MS));
+    }
+}
+
+/**
+ * Para o prefil atual
+ */
+void clearStop(void *pvParameters) {
+    portBASE_TYPE xStatusProfile;
+    RFIDProfiles rfidProfiles;
+    RFIDProfiles ProfileClean;
+    portBASE_TYPE xStatusSemaphore;
+
+    for (;;) {
+        xStatusSemaphore = xSemaphoreTake(xBinarySemaphoreClear, portMAX_DELAY);
+
+        if (xStatusSemaphore == pdTRUE) {
+            Serial.println(pcStringsToPrint[(int) pvParameters]);
+            Serial.flush();
+
+            strcpy(rfidProfiles.ProfileName, "None");
+            rfidProfiles.ProfileNumber = 0;
+            rfidProfiles.PWM = 0;
+
+            while (uxQueueMessagesWaiting(xQueueProfile) >= 1)
+                xQueueReceive(xQueueProfile, &ProfileClean, 0);
+
+            xStatusProfile = xQueueSendToBack(xQueueProfile, &rfidProfiles, 0);
+
+            if (xStatusProfile != pdPASS) {
+                Serial.print(
+                        "Error: ----- Could not send to the queue. --------\r\n");
+            }
+        }
+    }
+}
+
+/**
+ * Idle
+ */
 bool my_vApplicationIdleHook(void) {
-
-	return true;
-
+    //Serial.print("IDLE\r\n");
+    //Serial.flush();
+    return true;
 }
+
+/**
+ * The loop function is called in an endless loop
+ */
 void loop() {
-	vTaskDelete( NULL);
+    vTaskDelete( NULL);
 }
 
-void printDec(byte *buffer, byte bufferSize) {
+/**
+ * Interrupt que chama a task clearStop
+ */
+void IRAM_ATTR clear_EVENT(void) {
+    portENTER_CRITICAL(&myMutex);
+    {
+        static signed portBASE_TYPE xHigherPriorityTaskWoken;
 
-	byte id[bufferSize];
-	portBASE_TYPE xStatus;
-	int Sum = 0;
-	long Tag_UID = 0;
-	long Tag_UID2 = 0;
-	long Tag_UID3 = 0;
+        xHigherPriorityTaskWoken = pdFALSE;
 
-	Tag_UID = (buffer[0]) + (buffer[1] << 8) + (buffer[2] << 16)
-			+ (buffer[3] << 24);
+        xSemaphoreGiveFromISR(xBinarySemaphoreClear,
+                (signed portBASE_TYPE*)&xHigherPriorityTaskWoken);
 
-	Sum = buffer[0] + buffer[1] + buffer[2] + buffer[3];
-
-	if (bufferSize >= 7) {
-		Tag_UID2 = (buffer[4] << 32) + (buffer[5] << 40) + (buffer[6] << 48);
-
-		Sum = Sum + buffer[4] + buffer[5] + buffer[6];
-
-		if (bufferSize == 10) {
-
-			Tag_UID3 = (buffer[7] << 56) + (buffer[8] << 64)
-					+ (buffer[9] << 72);
-		}
-		Sum = Sum + buffer[7] + buffer[8] + buffer[9];
-
-	}
-
-	for (byte i = 0; i < bufferSize; i++) {
-		id[i] = (Tag_UID + Tag_UID2 + Tag_UID3) >> 8 * i;
-	}
-
-	Sum = buffer[0] + buffer[1] + buffer[2] + buffer[3];
-
-	for (byte i = 0; i < bufferSize; i++) {
-		Serial.print(id[i] < 0x10 ? " 0" : " ");
-		Serial.print(id[i]);
-
-	}
-//Apenas manda para a queue 4 bytes, correspondentes a 1 long, porque as tags que utilizamos são apenas de 4 bytes
-	xStatus = xQueueSendToBack(xQueue, &Sum, 0);
-	Serial.print("\t\tSum:");
-	Serial.print(Sum);
-
-	if (xStatus != pdPASS)
-		Serial.print("Could not send to the queue.\r\n");
-	if (xStatus == errQUEUE_FULL)
-		Serial.print("Queue is full.\r\n");
-
+        if (xHigherPriorityTaskWoken == pdTRUE) {
+            portYIELD_FROM_ISR();
+        }
+    }
+    portEXIT_CRITICAL(&myMutex);
 }
 
-void vInterruptHandler(void) //interrupção para mudar a tela do lcd (VTASK5)
-		{
-	static portBASE_TYPE xHigherPriorityTaskWoken;
-	MyPorfiles p;
-	p.number = 0;
-	p.temperature[0] = 0;
-	p.temperature[1] = 0;
-	p.fan_speed[0] = 0;
-	p.fan_speed[1] = 0;
-	p.tag_uid = 0;
-
-	xHigherPriorityTaskWoken = pdFALSE;
-	xQueueSendToBackFromISR(xQueue2, &p,
-			(portBASE_TYPE*)&xHigherPriorityTaskWoken); //enviar para a queue 2 um perfil reset com todos os parametros a 0
-	xSemaphoreGiveFromISR(xBinarySemaphore,
-			(portBASE_TYPE*)&xHigherPriorityTaskWoken);
-
-	if (xHigherPriorityTaskWoken == pdTRUE) {
-		vPortYield();
-	}
-}
-void vInterruptLCD(void) //interrupção para mudar a tela do lcd (VTASK5)
-		{
-
-	static portBASE_TYPE xHigherPriorityTaskWoken;
-
-	Serial.print("ISR LCD ACTIVATED");
-	xHigherPriorityTaskWoken = pdFALSE;
-	xSemaphoreGiveFromISR(xBinarySemaphoreLCD,
-			(portBASE_TYPE*)&xHigherPriorityTaskWoken);
-
-	if (xHigherPriorityTaskWoken == pdTRUE) {
-		vPortYield();
-	}
-
-}
-void vMeasure_fan_speed(void) {
-	portMUX_TYPE myMutex = portMUX_INITIALIZER_UNLOCKED;
-	taskENTER_CRITICAL(&myMutex);
-	{
-		InterruptCounter++;
-	}
-	taskEXIT_CRITICAL(&myMutex);
-
+/**
+ * Interrupt que conta os ticks da ventuinha
+ */
+void IRAM_ATTR counter_EVENT(void) {
+    portENTER_CRITICAL(&counterMutex);
+    {
+        ticksCounted++;
+    }
+    portEXIT_CRITICAL(&counterMutex);
 }
 
 
